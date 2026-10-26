@@ -1,6 +1,6 @@
 # kalkulator_wyplaty
 
 A new  project from Polish Data Analyst student Jakub Kulig for his portfolio 
-Poject is based on Application to count monthly salary and in future analyse it and release it to public use 
+Poject is based on Application to count monthly salary and in future analyse it and release it to public use (code is in Polish) 
 
 
