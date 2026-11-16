@@ -6,8 +6,24 @@ import customtkinter as ctk
 import tkinter as tk
 from tkinter import messagebox
 
+from settings import (
+    ETATY,
+    load_settings,
+    save_settings,
+    open_settings_window,
+    THEME_BG,
+    THEME_FG,
+    THEME_ACCENT,
+    THEME_ACCENT_FG,
+    THEME_FIELD_BG,
+    THEME_FONT_FAMILY,
+    THEME_FONT_SIZE,
+)
+
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_FILE = os.path.join(SCRIPT_DIR, "wyplaty_data.json")
+DATA_FILE = os.path.join(SCRIPT_DIR, "PT_data.json")
+
+HOURS_PER_DAY = 8  # godzin na dzień przy pełnym etacie
 
 MIESIACE_PL = [
     "",
@@ -25,27 +41,19 @@ MIESIACE_PL = [
     "Grudzień",
 ]
 
-THEME_BG = "#2b2b2b"
-THEME_FG = "#e8e8e8"
-THEME_ACCENT = "#4a9eff"
-THEME_ACCENT_FG = "#ffffff"
-THEME_FIELD_BG = "#3c3c3c"
-THEME_FONT_FAMILY = "Segoe UI"
-THEME_FONT_SIZE = 11
-
 
 class Application:
 
     def __init__(self, root):
         self.root = root
-        root.title("Kalkulator Wypłaty")
-        root.geometry("560x520")
-        root.minsize(480, 480)  # Minimalny rozmiar okna
+        root.title("$ Pay Time $")
+        root.geometry("560x600")
+        root.minsize(480, 560)  # Minimalny rozmiar okna
         root.configure(fg_color=THEME_BG)
 
         root.update_idletasks()
         root.geometry(
-            f"+{(root.winfo_screenwidth() - 560) // 2}+{(root.winfo_screenheight() - 520) // 2}"
+            f"+{(root.winfo_screenwidth() - 560) // 2}+{(root.winfo_screenheight() - 600) // 2}"
         )
 
         # Konfiguracja skalowania kolumn i wierszy okna głównego
@@ -58,36 +66,35 @@ class Application:
         self.current_year = now.year
         self.current_month = now.month
         self.data_store = {}
+        self.settings = load_settings()
 
-        # ---------------- 1. Górna sekcja: Stawka ----------------
-        self.frame_rate = ctk.CTkFrame(root, fg_color=THEME_BG)
-        self.frame_rate.grid(
+        # ---------------- 1. Górna sekcja: informacja o stawce + ustawienia ----------------
+        self.frame_top = ctk.CTkFrame(root, fg_color=THEME_BG)
+        self.frame_top.grid(
             row=0, column=0, padx=20, pady=(15, 5), sticky="ew"
         )
-        self.frame_rate.grid_columnconfigure(0, weight=1)
+        self.frame_top.grid_columnconfigure(0, weight=1)
 
-        self.label1 = ctk.CTkLabel(
-            self.frame_rate,
-            text="Wpisz godzinową stawkę (zł):",
+        self.lbl_info = ctk.CTkLabel(
+            self.frame_top,
+            text="",
             text_color=THEME_FG,
             font=ctk.CTkFont(family=THEME_FONT_FAMILY, size=THEME_FONT_SIZE),
         )
-        self.label1.grid(row=0, column=0, padx=(10, 10), pady=5, sticky="e")
+        self.lbl_info.grid(row=0, column=0, padx=10, pady=5, sticky="w")
 
-        self.stawka = ctk.CTkEntry(
-            self.frame_rate,
-            fg_color=THEME_FIELD_BG,
-            text_color=THEME_FG,
-            font=ctk.CTkFont(
-                family=THEME_FONT_FAMILY, size=THEME_FONT_SIZE, weight="bold"
-            ),
-            width=120,
+        self.btn_settings = ctk.CTkButton(
+            self.frame_top,
+            text="⚙",
+            width=32,
             height=30,
-            justify="center",
+            fg_color=THEME_FIELD_BG,
+            hover_color=THEME_ACCENT,
+            command=lambda: open_settings_window(
+                self.root, self.settings, on_save=self._update_totals
+            ),
         )
-        self.stawka.grid(row=0, column=1, padx=(0, 10), pady=5, sticky="e")
-        self.stawka.insert(0, "28.10")
-        self.stawka.bind("<KeyRelease>", lambda e: self._on_rate_change())
+        self.btn_settings.grid(row=0, column=1, padx=(0, 10), pady=5)
 
         # ---------------- 2. Nawigacja miesięcy ----------------
         self.frame_nav = ctk.CTkFrame(root, fg_color=THEME_BG)
@@ -150,9 +157,45 @@ class Application:
         for col in range(7):
             self.frame_kalendarz.grid_columnconfigure(col, weight=1)
 
-        # ---------------- 4. Podsumowanie na dole ----------------
+        # ---------------- 4. Progress bar ----------------
+        self.frame_progress = ctk.CTkFrame(
+            root, border_width=1, fg_color=THEME_BG
+        )
+        self.frame_progress.grid(
+            row=3, column=0, padx=20, pady=(5, 5), sticky="ew"
+        )
+        self.frame_progress.grid_columnconfigure(0, weight=1)
+
+        self.lbl_progress = ctk.CTkLabel(
+            self.frame_progress,
+            text="",
+            text_color=THEME_FG,
+            font=ctk.CTkFont(
+                family=THEME_FONT_FAMILY, size=THEME_FONT_SIZE, weight="bold"
+            ),
+        )
+        self.lbl_progress.grid(row=0, column=0, padx=10, pady=(8, 4))
+
+        self.progress = ctk.CTkProgressBar(
+            self.frame_progress,
+            height=14,
+            fg_color=THEME_FIELD_BG,
+            progress_color=THEME_ACCENT,
+        )
+        self.progress.grid(row=1, column=0, padx=15, pady=(0, 4), sticky="ew")
+        self.progress.set(0)
+
+        self.lbl_progress_info = ctk.CTkLabel(
+            self.frame_progress,
+            text="",
+            text_color="#9a9a9a",
+            font=ctk.CTkFont(family=THEME_FONT_FAMILY, size=10),
+        )
+        self.lbl_progress_info.grid(row=2, column=0, padx=10, pady=(0, 8))
+
+        # ---------------- 5. Podsumowanie na dole ----------------
         self.frame4 = ctk.CTkFrame(root, border_width=1, fg_color=THEME_BG)
-        self.frame4.grid(row=3, column=0, padx=20, pady=(5, 15), sticky="ew")
+        self.frame4.grid(row=4, column=0, padx=20, pady=(5, 15), sticky="ew")
         self.frame4.grid_columnconfigure((0, 1), weight=1)
 
         self.lbl_suma_godzin = ctk.CTkLabel(
@@ -316,30 +359,28 @@ class Application:
             self._update_totals()
             self._save_data()
 
-            entry_h.bind("<Return>", save)
-            entry_h.bind("<KP_Enter>", save)
-            entry_m.bind("<Return>", save)
-            entry_m.bind("<KP_Enter>", save)
-            dialog.bind("<Return>", save)
-            dialog.bind("<KP_Enter>", save)
+        entry_h.bind("<Return>", save)
+        entry_h.bind("<KP_Enter>", save)
+        entry_m.bind("<Return>", save)
+        entry_m.bind("<KP_Enter>", save)
+        dialog.bind("<Return>", save)
+        dialog.bind("<KP_Enter>", save)
 
-            # Funkcje przełączające fokus między polami
-            def focus_m(event):
-                entry_m.focus_set()
-                entry_m.select_range(0, tk.END)
-                return "break"
+        # Funkcje przełączające fokus między polami
+        def focus_m(event):
+            entry_m.focus_set()
+            entry_m.select_range(0, tk.END)
+            return "break"
 
+        def focus_h(event):
+            entry_h.focus_set()
+            entry_h.select_range(0, tk.END)
+            return "break"
 
-            def focus_h(event):
-                entry_h.focus_set()
-                entry_h.select_range(0, tk.END)
-                return "break"
-
-
-            # Podpięcie zdarzeń klawiatury
-            entry_h.bind("<Right>", focus_m)  # Strzałka w prawo w godzinach -> minuty
-            entry_h.bind("<Tab>", focus_m)  # Tab w godzinach -> minuty
-            entry_m.bind("<Left>", focus_h)  # Strzałka w lewo w minutach -> godziny
+        # Podpięcie zdarzeń klawiatury
+        entry_h.bind("<Right>", focus_m)  # Strzałka w prawo w godzinach -> minuty
+        entry_h.bind("<Tab>", focus_m)  # Tab w godzinach -> minuty
+        entry_m.bind("<Left>", focus_h)  # Strzałka w lewo w minutach -> godziny
 
         # Funkcja wyzerowania wpisu dla danego dnia
         def clear_day():
@@ -376,17 +417,85 @@ class Application:
         )
         btn_save.grid(row=0, column=1, padx=5)
 
-        # Przechwytywanie Entera dla okienka dialogowego
         dialog.focus_force()
-        dialog.bind("<Return>", lambda e: save())
-        dialog.bind("<KP_Enter>", lambda e: save())
+
+    def _workdays_in_month(self):
+        """Liczba dni roboczych (Pn-Pt) w wyświetlanym miesiącu.
+        Święta nie są uwzględniane."""
+        weeks = calendar.monthcalendar(self.current_year, self.current_month)
+        return sum(
+            1
+            for week in weeks
+            for col, day in enumerate(week)
+            if day != 0 and col < 5
+        )
+
+    def _contract_name(self):
+        """Nazwa do wyświetlenia: wymiar etatu albo 'Zlecenie'."""
+        if self.settings["contract"] == "zlecenie":
+            return "Zlecenie"
+        etat = self.settings["employment"]
+        return next(
+            (n for n, v in ETATY.items() if v == etat), f"{etat:g} etatu"
+        )
+
+    def _update_progress(self, hours, salary):
+        s = self.settings
+        if s["contract"] == "etat":
+            # Etat: pasek = przepracowany czas względem normy etatu
+            workdays = self._workdays_in_month()
+            target = workdays * HOURS_PER_DAY * s["employment"]
+            ratio = hours / target if target > 0 else 0
+            title = f"{hours:.1f} / {target:.0f} h"
+            info = (
+                f"{ratio * 100:.0f}% normy "
+                f"({self._contract_name()}, {workdays} dni roboczych)"
+            )
+        elif s["bar_mode"] == "kwota":
+            # Zlecenie, pasek kwoty
+            goal = s["monthly_goal"]
+            ratio = salary / goal if goal > 0 else 0
+            title = (
+                f"{salary:.0f} / {goal:.0f} zł"
+                if goal > 0
+                else f"{salary:.0f} zł"
+            )
+            info = (
+                f"{ratio * 100:.0f}% celu: {goal:.0f} zł"
+                if goal > 0
+                else "Ustaw cel kwoty w ustawieniach (⚙)"
+            )
+        else:
+            # Zlecenie, pasek czasu pracy
+            goal_h = s["goal_hours"]
+            ratio = hours / goal_h if goal_h > 0 else 0
+            title = (
+                f"{hours:.1f} / {goal_h:g} h"
+                if goal_h > 0
+                else f"{hours:.1f} h"
+            )
+            info = (
+                f"{ratio * 100:.0f}% celu: {goal_h:g} h"
+                if goal_h > 0
+                else "Ustaw cel czasu pracy w ustawieniach (⚙)"
+            )
+
+        self.lbl_progress.configure(text=title)
+        self.lbl_progress_info.configure(text=info)
+        self.progress.set(min(ratio, 1.0))
+        self.progress.configure(
+            progress_color="#50fa7b" if ratio >= 1.0 else THEME_ACCENT
+        )
 
     def _update_totals(self):
-        try:
-            rate_val = self.stawka.get().replace(",", ".")
-            rate = float(rate_val) if rate_val else 0.0
-        except ValueError:
-            rate = 0.0
+        rate = self.settings["hourly_rate"]
+
+        if rate > 0:
+            self.lbl_info.configure(
+                text=f"Stawka: {rate:.2f} zł/h  ·  {self._contract_name()}"
+            )
+        else:
+            self.lbl_info.configure(text="Ustaw stawkę w ustawieniach (⚙)")
 
         month_key = (self.current_year, self.current_month)
         month_data = self.data_store.get(month_key, {})
@@ -427,10 +536,7 @@ class Application:
         self.lbl_suma_wyplaty.configure(
             text=f"Wypłata: {total_salary:.2f} zł"
         )
-
-    def _on_rate_change(self):
-        self._update_totals()
-        self._save_data()
+        self._update_progress(total_dec_hours, total_salary)
 
     def poprzedni_miesiac(self):
         if self.current_month == 1:
@@ -453,7 +559,7 @@ class Application:
             f"{rok}-{msc}": {str(dzien): h_m for dzien, h_m in dni.items()}
             for (rok, msc), dni in self.data_store.items()
         }
-        payload = {"rate": self.stawka.get(), "schedule": serialized_data}
+        payload = {"schedule": serialized_data}
 
         try:
             with open(DATA_FILE, "w", encoding="utf-8") as f:
@@ -469,9 +575,16 @@ class Application:
             with open(DATA_FILE, "r", encoding="utf-8") as f:
                 payload = json.load(f)
 
-            raw_rate = payload.get("rate", "28.10")
-            self.stawka.delete(0, tk.END)
-            self.stawka.insert(0, raw_rate)
+            # Migracja: stawka ze starego pliku danych -> settings.json
+            old_rate = payload.get("rate")
+            if old_rate and not self.settings["hourly_rate"]:
+                try:
+                    self.settings["hourly_rate"] = float(
+                        str(old_rate).replace(",", ".")
+                    )
+                    save_settings(self.settings)
+                except ValueError:
+                    pass
 
             schedule = payload.get("schedule", {})
             for key, dni in schedule.items():
